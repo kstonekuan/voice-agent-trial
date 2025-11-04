@@ -31,21 +31,3 @@ def configure_logging() -> None:
         level=log_level_str,
         colorize=True,
     )
-
-
-def get_logger(name: str | None = None):
-    """
-    Get a logger instance, optionally bound to a specific name.
-
-    Args:
-        name: Optional name to bind to the logger (e.g., module name)
-
-    Returns:
-        Logger instance (loguru logger)
-
-    Note:
-        Loguru uses a single global logger instance, so the name parameter
-        is provided for API compatibility but doesn't create separate loggers.
-        The actual module name is automatically captured by loguru.
-    """
-    return logger

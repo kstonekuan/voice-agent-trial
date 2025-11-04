@@ -1,309 +1,315 @@
 #!/usr/bin/env python3
 """
-Voice Agent Platform - CLI Application
+Voice Agent Platform - Bot Implementation
 
 A real-time voice assistant using:
 - Cartesia Ink-Whisper (STT)
 - Cerebras Llama 3.3-70B (LLM)
 - ElevenLabs Flash v2.5 (TTS)
-- Daily WebRTC or WebSocket (Transport)
+- Daily WebRTC (Transport)
+
+This bot uses Pipecat's runner for automatic room/token management.
 """
 
-import asyncio
 import os
+import sys
 from pathlib import Path
+from typing import Any
 
-import typer
+from loguru import logger
+from PIL import Image
+from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
+from pipecat.audio.vad.silero import SileroVADAnalyzer
+from pipecat.audio.vad.vad_analyzer import VADParams
+from pipecat.frames.frames import (
+    BotStartedSpeakingFrame,
+    BotStoppedSpeakingFrame,
+    Frame,
+    LLMRunFrame,
+    OutputImageRawFrame,
+    SpriteFrame,
+)
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
-from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
+from pipecat.processors.aggregators.llm_context import LLMContext
+from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
+from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
+from pipecat.processors.frameworks.rtvi import RTVIConfig, RTVIObserver, RTVIProcessor
+from pipecat.runner.types import DailyRunnerArguments, RunnerArguments, SmallWebRTCRunnerArguments
+from pipecat.transports.base_transport import BaseTransport, TransportParams
+from pipecat.transports.daily.transport import DailyTransport
+from pydantic import ValidationError
 
-from config.settings import load_settings
+from config.settings import Settings
 from services.llm_service import create_llm_service
 from services.stt_service import create_stt_service
-from services.transport import create_transport
 from services.tts_service import create_tts_service
-from utils.logger import configure_logging, get_logger
 
-__version__ = "0.1.0"
+# Load animation sprites
+sprites = []
+script_dir = Path(__file__).parent
 
-app = typer.Typer(
-    name="voice-agent",
-    help="Real-time voice agent platform with ultra-low latency",
-    add_completion=False,
-)
+# Load sequential animation frames
+for i in range(1, 26):
+    # Build the full path to the image file
+    full_path = script_dir / f"assets/robot0{i}.png"
+    # Open the image and convert it to bytes
+    with Image.open(full_path) as img:
+        sprites.append(OutputImageRawFrame(image=img.tobytes(), size=img.size, format=img.format))
+
+# Create a smooth animation by adding reversed frames
+flipped = sprites[::-1]
+sprites.extend(flipped)
+
+# Define static and animated states
+quiet_frame = sprites[0]  # Static frame for when bot is listening
+talking_frame = SpriteFrame(images=sprites)  # Animation sequence for when bot is talking
 
 
-async def run_voice_agent(
-    transport_type: str | None = None,
-    env_file: Path | None = None,
-    system_prompt: str | None = None,
-    verbose: bool = False,
-):
+class TalkingAnimation(FrameProcessor):
+    """Manages the bot's visual animation states.
+
+    Switches between static (listening) and animated (talking) states based on
+    the bot's current speaking status.
     """
-    Main voice agent application logic.
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._is_talking = False
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
+        """Process incoming frames and update animation state.
+
+        Args:
+            frame: The incoming frame to process
+            direction: The direction of frame flow in the pipeline
+        """
+        await super().process_frame(frame, direction)
+
+        # Switch to talking animation when bot starts speaking
+        if isinstance(frame, BotStartedSpeakingFrame):
+            if not self._is_talking:
+                await self.push_frame(talking_frame)
+                self._is_talking = True
+        # Return to static frame when bot stops speaking
+        elif isinstance(frame, BotStoppedSpeakingFrame):
+            await self.push_frame(quiet_frame)
+            self._is_talking = False
+
+        await self.push_frame(frame, direction)
+
+
+def configure_logger(verbose: bool = False) -> None:
+    """
+    Configure loguru logging with sensible defaults.
 
     Args:
-        transport_type: Transport type override (websocket or daily)
-        env_file: Custom .env file path
-        system_prompt: Custom system prompt for the LLM
-        verbose: Enable verbose logging
+        verbose: If True, set log level to DEBUG, otherwise use LOG_LEVEL env var
     """
-    # Configure logging
-    if verbose:
-        os.environ["LOG_LEVEL"] = "DEBUG"
-    configure_logging()
-    logger = get_logger(__name__)
+    log_level_str = "DEBUG" if verbose else os.getenv("LOG_LEVEL", "INFO").upper()
 
-    try:
-        # Load environment from custom file if provided
-        if env_file:
-            if not env_file.exists():
-                logger.error(f"Environment file not found: {env_file}")
-                raise typer.Exit(1)
-            from dotenv import load_dotenv
+    # Remove default handler
+    logger.remove()
 
-            load_dotenv(env_file)
-            logger.info(f"Loaded custom environment from: {env_file}")
-
-        # Override transport type if provided
-        if transport_type:
-            os.environ["TRANSPORT_TYPE"] = transport_type
-
-        # Load and validate settings
-        logger.info("Loading configuration...")
-        settings = load_settings()
-
-        # Display configuration
-        logger.info("=" * 60)
-        logger.info("Voice Agent Configuration")
-        logger.info("=" * 60)
-        logger.info(f"Transport: {settings.transport_type}")
-        logger.info(f"LLM Model: {settings.llm_model}")
-        logger.info(f"Sample Rate: {settings.audio_sample_rate} Hz")
-        logger.info(f"TTS Optimization: Level {settings.tts_optimize_latency}")
-        logger.info("=" * 60)
-
-        # Initialize services
-        logger.info("Initializing services...")
-
-        transport = create_transport(settings)
-        stt = create_stt_service(settings)
-        llm, default_prompt = create_llm_service(settings)
-        tts = create_tts_service(settings)
-
-        # Use custom system prompt if provided
-        final_system_prompt = system_prompt if system_prompt else default_prompt
-
-        # Create LLM context with system prompt
-        context = OpenAILLMContext(
-            messages=[{"role": "system", "content": final_system_prompt}],
-            tools=[],
-        )
-        context_aggregator = llm.create_context_aggregator(context)
-
-        # Build pipeline
-        logger.info("Building pipeline...")
-        pipeline = Pipeline(
-            [
-                transport.input(),  # Audio input from transport
-                stt,  # Speech to text
-                context_aggregator.user(),  # Add user message to context
-                llm,  # Generate response
-                tts,  # Text to speech
-                transport.output(),  # Audio output to transport
-                context_aggregator.assistant(),  # Add assistant response to context
-            ]
-        )
-
-        # Create pipeline task
-        task = PipelineTask(
-            pipeline,
-            params=PipelineParams(
-                allow_interruptions=True,  # Enable interruption handling
-                enable_metrics=True,  # Enable performance metrics
-                enable_usage_metrics=True,  # Enable usage tracking
-            ),
-        )
-
-        # Display ready message
-        logger.success("=" * 60)
-        logger.success("🎤 Voice agent is ready!")
-        logger.success("Start speaking to interact with the AI assistant.")
-        logger.success("Press Ctrl+C to stop.")
-        logger.success("=" * 60)
-
-        # Create and run the pipeline runner
-        runner = PipelineRunner()
-        await runner.run(task)
-
-    except ValueError as e:
-        logger.error(f"Configuration Error: {e}")
-        logger.warning("Please check your .env file and ensure all required API keys are set.")
-        logger.info("See .env.example for reference.")
-        raise typer.Exit(1)
-
-    except KeyboardInterrupt:
-        logger.warning("\nShutting down voice agent...")
-
-    except Exception as e:
-        logger.error(f"Unexpected error: {e}")
-        if verbose:
-            logger.exception("Full traceback:")
-        raise typer.Exit(1)
-
-    finally:
-        logger.info("Voice agent stopped.")
-
-
-@app.command()
-def start(
-    transport: str | None = typer.Option(
-        None,
-        "--transport",
-        "-t",
-        help="Transport type: 'websocket' (dev) or 'daily' (production)",
-        show_default="from .env",
-    ),
-    env_file: Path | None = typer.Option(
-        None,
-        "--env-file",
-        "-e",
-        help="Path to custom .env file",
-        exists=True,
-        file_okay=True,
-        dir_okay=False,
-    ),
-    system_prompt: str | None = typer.Option(
-        None,
-        "--system-prompt",
-        "-s",
-        help="Custom system prompt for the LLM",
-    ),
-    verbose: bool = typer.Option(
-        False,
-        "--verbose",
-        "-v",
-        help="Enable verbose/debug logging",
-    ),
-):
-    """
-    Start the voice agent with the specified configuration.
-
-    The agent uses:
-    • Cartesia Ink-Whisper for speech recognition (fastest TTCT)
-    • Cerebras Llama 3.3-70B for language understanding (450 tok/sec)
-    • ElevenLabs Flash v2.5 for speech synthesis (75ms latency)
-    • Configurable WebSocket or Daily WebRTC transport
-
-    Examples:
-        # Start with WebSocket transport (default)
-        voice-agent start
-
-        # Start with Daily WebRTC transport
-        voice-agent start --transport daily
-
-        # Use custom .env file
-        voice-agent start --env-file .env.production
-
-        # Enable verbose logging
-        voice-agent start --verbose
-    """
-    asyncio.run(
-        run_voice_agent(
-            transport_type=transport,
-            env_file=env_file,
-            system_prompt=system_prompt,
-            verbose=verbose,
-        )
+    # Add custom handler with colorization and formatting
+    log_format = (
+        "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
+        "<level>{level: <8}</level> | "
+        "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - "
+        "<level>{message}</level>"
+    )
+    logger.add(
+        sys.stdout,
+        format=log_format,
+        level=log_level_str,
+        colorize=True,
     )
 
 
-@app.command()
-def version():
-    """Show version information."""
-    # Configure logging for this command
-    configure_logging()
-    logger = get_logger(__name__)
-
-    logger.info(f"Voice Agent Platform version {__version__}")
-    logger.info("")
-    logger.info("Components:")
-    logger.info("  • STT: Cartesia Ink-Whisper")
-    logger.info("  • LLM: Cerebras Llama 3.3-70B")
-    logger.info("  • TTS: ElevenLabs Flash v2.5")
-    logger.info("  • Framework: Pipecat")
-
-
-@app.command()
-def config_check(
-    env_file: Path | None = typer.Option(
-        None,
-        "--env-file",
-        "-e",
-        help="Path to custom .env file",
-        exists=True,
-        file_okay=True,
-        dir_okay=False,
-    ),
-):
+async def run_bot(transport: BaseTransport) -> None:
     """
-    Validate configuration and check API keys.
+    Main bot execution function.
 
-    This command loads your configuration and validates all settings
-    without starting the voice agent.
+    This follows the Pipecat example pattern.
+
+    Args:
+        transport: Configured Daily transport instance from runner
     """
-    # Configure logging for this command
-    configure_logging()
-    logger = get_logger(__name__)
-
+    # Load configuration
     try:
-        # Load environment from custom file if provided
-        if env_file:
-            if not env_file.exists():
-                logger.error(f"Environment file not found: {env_file}")
-                raise typer.Exit(1)
-            from dotenv import load_dotenv
-
-            load_dotenv(env_file)
-
-        # Load and validate settings
-        settings = load_settings()
-
-        logger.success("✓ Configuration is valid!")
-        logger.info("")
-        logger.info("Settings:")
-        logger.info(f"  Transport Type: {settings.transport_type}")
-        logger.info(f"  LLM Model: {settings.llm_model}")
-        logger.info(f"  LLM Temperature: {settings.llm_temperature}")
-        logger.info(f"  LLM Max Tokens: {settings.llm_max_tokens}")
-        logger.info(f"  Audio Sample Rate: {settings.audio_sample_rate} Hz")
-        logger.info(f"  TTS Optimization: Level {settings.tts_optimize_latency}")
-        logger.info(f"  ElevenLabs Voice: {settings.elevenlabs_voice_id}")
-
-        logger.info("")
-        logger.info("API Keys:")
-        logger.info(f"  Cartesia: {'✓ Set' if settings.cartesia_api_key else '✗ Missing'}")
-        logger.info(f"  Cerebras: {'✓ Set' if settings.cerebras_api_key else '✗ Missing'}")
-        logger.info(f"  ElevenLabs: {'✓ Set' if settings.elevenlabs_api_key else '✗ Missing'}")
-
-        if settings.transport_type == "daily":
-            logger.info(f"  Daily API Key: {'✓ Set' if settings.daily_api_key else '✗ Missing'}")
-            logger.info(f"  Daily Room URL: {'✓ Set' if settings.daily_room_url else '✗ Missing'}")
-            logger.info(f"  Daily Token: {'✓ Set' if settings.daily_token else '✗ Missing'}")
-
-    except ValueError as e:
+        settings = Settings()
+    except ValidationError as e:
         logger.error(f"Configuration Error: {e}")
         logger.warning("Please check your .env file and ensure all required API keys are set.")
         logger.info("See .env.example for reference.")
-        raise typer.Exit(1)
+        return
+
+    # Initialize services
+    logger.info("Initializing services...")
+    stt = create_stt_service(settings)
+    llm = create_llm_service(settings)
+    tts = create_tts_service(settings)
+
+    # Create conversation messages
+    messages = [
+        {
+            "role": "system",
+            "content": "You are a friendly AI assistant. Respond naturally and keep your answers conversational.",
+        },
+    ]
+
+    # Set up conversation context
+    context = LLMContext(messages)
+    context_aggregator = LLMContextAggregatorPair(context)
+
+    # RTVI events for Pipecat client UI
+    rtvi = RTVIProcessor(config=RTVIConfig(config=[]))
+
+    # Create talking animation processor
+    ta = TalkingAnimation()
+
+    # Build pipeline
+    logger.info("Building pipeline...")
+    pipeline = Pipeline(
+        [
+            transport.input(),  # Audio input from transport
+            stt,  # Speech to text
+            rtvi,  # RTVI event handling
+            context_aggregator.user(),  # Add user message to context
+            llm,  # Generate response
+            tts,  # Text to speech
+            ta,  # Talking animation (after TTS)
+            transport.output(),  # Audio output to transport
+            context_aggregator.assistant(),  # Add assistant response to context
+        ]
+    )
+
+    # Create pipeline task
+    task = PipelineTask(
+        pipeline,
+        params=PipelineParams(
+            allow_interruptions=True,
+            enable_metrics=True,
+            enable_usage_metrics=True,
+        ),
+        observers=[RTVIObserver(rtvi)],
+    )
+
+    # Queue the initial quiet frame
+    await task.queue_frame(quiet_frame)
+
+    # Register RTVI event handlers
+    @rtvi.event_handler("on_client_ready")
+    async def on_client_ready(rtvi_processor: Any) -> None:  # noqa: ANN401
+        logger.info("Client ready, setting bot ready")
+        await rtvi_processor.set_bot_ready()
+        # Kick off the conversation
+        await task.queue_frames([LLMRunFrame()])
+
+    # Register transport event handlers
+    @transport.event_handler("on_client_connected")
+    async def on_client_connected(transport_instance: Any, participant: Any) -> None:  # noqa: ANN401
+        logger.success(f"✅ Client connected: {participant}")
+        if isinstance(transport, DailyTransport):
+            await transport.capture_participant_transcription(participant["id"])
+
+    @transport.event_handler("on_client_disconnected")
+    async def on_client_disconnected(transport_instance: Any, client: Any) -> None:  # noqa: ANN401
+        logger.info(f"Client disconnected: {client}")
+        await task.cancel()
+
+    # Display ready message
+    logger.success("=" * 60)
+    logger.success("🎤 Voice agent is ready!")
+    logger.success("Waiting for client connection...")
+    logger.success("=" * 60)
+
+    # Run the pipeline
+    runner = PipelineRunner(handle_sigint=False)
+    await runner.run(task)
 
 
-def cli():
-    """CLI entry point."""
-    app()
+async def bot(runner_args: RunnerArguments) -> None:
+    """
+    Main bot entry point compatible with Pipecat runner.
+
+    This function is called by the Pipecat runner for each new connection.
+
+    Args:
+        runner_args: Runner arguments provided by the Pipecat runner
+    """
+    logger.debug("runner args", runner_args)
+
+    # Create VAD analyzer following Pipecat best practices
+    vad_params = VADParams(
+        stop_secs=0.2,  # Quick stop detection
+    )
+    vad = SileroVADAnalyzer(
+        params=vad_params,
+    )
+
+    # Create turn analyzer for natural conversation flow
+    turn_analyzer = LocalSmartTurnAnalyzerV3()
+
+    transport = None
+
+    if isinstance(runner_args, DailyRunnerArguments):
+        logger.info(
+            "Creating Daily transport",
+            room_url=runner_args.room_url,
+            has_token=bool(runner_args.token),
+        )
+
+        # Lazy import for Daily transport
+        from pipecat.transports.daily.transport import DailyParams
+
+        transport = DailyTransport(
+            runner_args.room_url,
+            runner_args.token,
+            "Voice Agent",
+            params=DailyParams(
+                audio_in_enabled=True,
+                audio_out_enabled=True,
+                video_out_enabled=True,
+                video_out_width=1024,
+                video_out_height=576,
+                vad_analyzer=vad,
+                turn_analyzer=turn_analyzer,
+                transcription_enabled=True,
+            ),
+        )
+
+    elif isinstance(runner_args, SmallWebRTCRunnerArguments):
+        logger.info("Creating WebRTC transport")
+
+        # Lazy import for WebRTC transport
+        from pipecat.transports.network.small_webrtc import SmallWebRTCTransport
+
+        transport = SmallWebRTCTransport(
+            params=TransportParams(
+                audio_in_enabled=True,
+                audio_out_enabled=True,
+                video_out_enabled=True,
+                video_out_width=1024,
+                video_out_height=576,
+                video_out_is_live=True,
+                vad_analyzer=vad,
+                turn_analyzer=turn_analyzer,
+            ),
+            webrtc_connection=runner_args.webrtc_connection,
+        )
+
+    else:
+        logger.error("This bot only supports Daily and webrtc transport")
+        return
+
+    # Run the bot
+    await run_bot(transport)
 
 
 if __name__ == "__main__":
-    cli()
+    # Import and run the Pipecat runner
+    from pipecat.runner.run import main
+
+    main()

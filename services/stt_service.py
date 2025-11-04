@@ -1,5 +1,6 @@
 """Cartesia Speech-to-Text service initialization."""
 
+from loguru import logger
 from pipecat.services.cartesia.stt import CartesiaSTTService
 
 from config.settings import Settings
@@ -15,9 +16,9 @@ def create_stt_service(settings: Settings) -> CartesiaSTTService:
     Returns:
         Configured CartesiaSTTService instance
     """
-    stt = CartesiaSTTService(
-        api_key=settings.cartesia_api_key,
-        sample_rate=settings.audio_sample_rate,
+    logger.info(
+        "initializing_cartesia_stt",
     )
-
-    return stt
+    return CartesiaSTTService(
+        api_key=settings.cartesia_api_key,
+    )

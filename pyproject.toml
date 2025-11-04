@@ -5,17 +5,17 @@ description = "Real-time voice agent platform using Pipecat, Cartesia, Cerebras,
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "pipecat-ai[daily,cartesia,cerebras,elevenlabs,silero]>=0.0.92",
-    "python-dotenv>=1.2.1",
-    "loguru>=0.7.0",
-    "typer>=0.12.0",
+    "pipecat-ai[daily,cartesia,cerebras,elevenlabs,local-smart-turn-v3,runner,webrtc]>=0.0.92",
+    "pydantic-settings>=2.11.0",
+    "loguru>=0.7.3",
+    "typer>=0.20.0",
 ]
+
+[project.scripts]
+voice-agent = "voice_agent:main"
 
 [project.optional-dependencies]
 dev = ["ruff>=0.14.3", "ty<=0.0.1a25"]
-
-[project.scripts]
-voice-agent = "voice_agent:cli"
 
 [build-system]
 requires = ["hatchling"]
@@ -29,9 +29,34 @@ line-length = 100
 target-version = "py310"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "N", "W", "UP"]
-ignore = []
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade
+    "ANN", # flake8-annotations
+    "PTH", # flake8-use-pathlib
+    "RET", # flake8-return
+    "SIM", # flake8-simplify
+    "TID", # flake8-tidy-imports
+    "C",   # mccabe complexity
+    "PGH", # pylint guessing/hinting
+]
+ignore = [
+    "E501", # line too long, handled by formatter
+    "B008", # do not perform function calls in argument defaults
+    "C901", # too complex
+]
 
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
+
+[tool.ty.rules]
+division-by-zero = "error"
+deprecated = "error"
+unused-ignore-comment = "error"
+possibly-unresolved-reference = "error"
