@@ -5,11 +5,12 @@ description = "Real-time voice agent platform using Pipecat, Cartesia, Cerebras,
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "pipecat-ai[daily,cartesia,cerebras,elevenlabs,local-smart-turn-v3,runner,webrtc]>=0.0.92",
+    "pipecat-ai[daily,cartesia,cerebras,elevenlabs,local-smart-turn-v3,runner,webrtc,tracing]>=0.0.92",
     "pydantic-settings>=2.11.0",
     "loguru>=0.7.3",
     "typer>=0.20.0",
     "pipecat-ai-tail>=0.0.2",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.20.0",
 ]
 
 [project.scripts]

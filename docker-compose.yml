@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: voice-agent-jaeger
+    ports:
+      # Jaeger UI
+      - "16686:16686"
+      # OTLP gRPC receiver
+      - "4317:4317"
+      # OTLP HTTP receiver
+      - "4318:4318"
+      # Jaeger Collector (deprecated, but kept for compatibility)
+      - "14268:14268"
+      # Jaeger Agent (deprecated, but kept for compatibility)
+      - "6831:6831/udp"
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+      - LOG_LEVEL=info
+    restart: unless-stopped
+    networks:
+      - voice-agent
+
+networks:
+  voice-agent:
+    driver: bridge

@@ -45,6 +45,7 @@ from config.settings import Settings
 from services.llm_service import create_llm_service
 from services.stt_service import create_stt_service
 from services.tts_service import create_tts_service
+from utils.tracing import setup_tracing
 
 # Load animation sprites
 sprites = []
@@ -145,6 +146,9 @@ async def run_bot(transport: BaseTransport) -> None:
         logger.info("See .env.example for reference.")
         return
 
+    # Initialize OpenTelemetry tracing if enabled
+    setup_tracing(settings)
+
     # Initialize services
     logger.info("Initializing services...")
     stt = create_stt_service(settings)
@@ -202,6 +206,8 @@ async def run_bot(transport: BaseTransport) -> None:
             enable_usage_metrics=True,
         ),
         observers=[RTVIObserver(rtvi)],
+        enable_tracing=settings.otel_enabled,
+        enable_turn_tracking=settings.otel_enabled,
     )
 
     # Queue the initial quiet frame

@@ -29,3 +29,10 @@ class Settings(BaseSettings):
 
     # Logging
     log_level: str = Field("INFO", description="Logging level")
+
+    # OpenTelemetry Tracing
+    otel_enabled: bool = Field(False, description="Enable OpenTelemetry tracing")
+    otel_exporter_otlp_endpoint: str = Field(
+        "http://localhost:4317", description="OTLP gRPC endpoint for trace export"
+    )
+    otel_service_name: str = Field("voice-agent", description="Service name for tracing")
