@@ -30,7 +30,6 @@ from pipecat.frames.frames import (
     SpriteFrame,
 )
 from pipecat.pipeline.pipeline import Pipeline
-from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
@@ -39,6 +38,7 @@ from pipecat.processors.frameworks.rtvi import RTVIConfig, RTVIObserver, RTVIPro
 from pipecat.runner.types import DailyRunnerArguments, RunnerArguments, SmallWebRTCRunnerArguments
 from pipecat.transports.base_transport import BaseTransport, TransportParams
 from pipecat.transports.daily.transport import DailyTransport
+from pipecat_tail.runner import TailRunner
 from pydantic import ValidationError
 
 from config.settings import Settings
@@ -155,7 +155,15 @@ async def run_bot(transport: BaseTransport) -> None:
     messages = [
         {
             "role": "system",
-            "content": "You are a friendly AI assistant. Respond naturally and keep your answers conversational.",
+            "content": (
+                "You are a friendly AI assistant in a voice conversation. "
+                "Your responses will be spoken aloud using text-to-speech. "
+                "IMPORTANT: Never use tables, markdown formatting, bullet points, numbered lists, "
+                "asterisks, emojis, special characters, or code blocks. "
+                "Speak naturally as if having a verbal conversation. "
+                "Use complete sentences and natural transitions instead of lists. "
+                "Keep your answers conversational and concise."
+            ),
         },
     ]
 
@@ -226,7 +234,7 @@ async def run_bot(transport: BaseTransport) -> None:
     logger.success("=" * 60)
 
     # Run the pipeline
-    runner = PipelineRunner(handle_sigint=False)
+    runner = TailRunner(handle_sigint=False)
     await runner.run(task)
 
 
