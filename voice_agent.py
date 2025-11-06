@@ -11,8 +11,6 @@ A real-time voice assistant using:
 This bot uses Pipecat's runner for automatic room/token management.
 """
 
-import os
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +28,7 @@ from pipecat.frames.frames import (
     SpriteFrame,
 )
 from pipecat.pipeline.pipeline import Pipeline
+from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
@@ -38,13 +37,13 @@ from pipecat.processors.frameworks.rtvi import RTVIConfig, RTVIObserver, RTVIPro
 from pipecat.runner.types import DailyRunnerArguments, RunnerArguments, SmallWebRTCRunnerArguments
 from pipecat.transports.base_transport import BaseTransport, TransportParams
 from pipecat.transports.daily.transport import DailyTransport
-from pipecat_tail.runner import TailRunner
 from pydantic import ValidationError
 
 from config.settings import Settings
 from services.llm_service import create_llm_service
 from services.stt_service import create_stt_service
 from services.tts_service import create_tts_service
+from utils.logger import configure_logging
 from utils.tracing import setup_tracing
 
 # Load animation sprites
@@ -101,33 +100,6 @@ class TalkingAnimation(FrameProcessor):
         await self.push_frame(frame, direction)
 
 
-def configure_logger(verbose: bool = False) -> None:
-    """
-    Configure loguru logging with sensible defaults.
-
-    Args:
-        verbose: If True, set log level to DEBUG, otherwise use LOG_LEVEL env var
-    """
-    log_level_str = "DEBUG" if verbose else os.getenv("LOG_LEVEL", "INFO").upper()
-
-    # Remove default handler
-    logger.remove()
-
-    # Add custom handler with colorization and formatting
-    log_format = (
-        "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
-        "<level>{level: <8}</level> | "
-        "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - "
-        "<level>{message}</level>"
-    )
-    logger.add(
-        sys.stdout,
-        format=log_format,
-        level=log_level_str,
-        colorize=True,
-    )
-
-
 async def run_bot(transport: BaseTransport) -> None:
     """
     Main bot execution function.
@@ -145,9 +117,6 @@ async def run_bot(transport: BaseTransport) -> None:
         logger.warning("Please check your .env file and ensure all required API keys are set.")
         logger.info("See .env.example for reference.")
         return
-
-    # Initialize OpenTelemetry tracing if enabled
-    setup_tracing(settings)
 
     # Initialize services
     logger.info("Initializing services...")
@@ -240,7 +209,7 @@ async def run_bot(transport: BaseTransport) -> None:
     logger.success("=" * 60)
 
     # Run the pipeline
-    runner = TailRunner(handle_sigint=False)
+    runner = PipelineRunner(handle_sigint=False)
     await runner.run(task)
 
 
@@ -253,8 +222,6 @@ async def bot(runner_args: RunnerArguments) -> None:
     Args:
         runner_args: Runner arguments provided by the Pipecat runner
     """
-    logger.debug("runner args", runner_args)
-
     # Create VAD analyzer following Pipecat best practices
     vad_params = VADParams(
         stop_secs=0.2,  # Quick stop detection
@@ -323,6 +290,19 @@ async def bot(runner_args: RunnerArguments) -> None:
 
 
 if __name__ == "__main__":
+    # Configure logging before starting
+    configure_logging()
+
+    # Initialize OpenTelemetry tracing once at startup
+    try:
+        settings = Settings()
+        setup_tracing(settings)
+    except ValidationError as e:
+        logger.error(f"Configuration Error during startup: {e}")
+        logger.warning("Please check your .env file and ensure all required API keys are set.")
+        logger.info("See .env.example for reference.")
+        exit(1)
+
     # Import and run the Pipecat runner
     from pipecat.runner.run import main
 
