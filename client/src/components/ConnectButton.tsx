@@ -1,4 +1,5 @@
 import { usePipecatClient, usePipecatClientTransportState } from '@pipecat-ai/client-react';
+import { env } from '../env';
 
 export function ConnectButton() {
   const client = usePipecatClient();
@@ -17,7 +18,7 @@ export function ConnectButton() {
       } else {
         // Use Pipecat's runner endpoint to start bot and connect
         await client.startBotAndConnect({
-          endpoint: 'http://localhost:7860/start',
+          endpoint: `${env.VITE_RUNNER_ENDPOINT}/start`,
           requestData: {
             createDailyRoom: true,
           },
