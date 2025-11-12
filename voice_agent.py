@@ -245,7 +245,22 @@ async def bot(runner_args: RunnerArguments) -> None:
         # Lazy import for Daily transport
         from pipecat.transports.daily.transport import DailyParams
 
-        transport = DailyTransport(
+        from config.settings import Settings
+        from services.extended_daily_transport import ExtendedDailyTransport
+        from utils.network_stats_writer import NetworkStatsWriter
+
+        settings = Settings()
+
+        # Create network stats writer if enabled
+        stats_writer = None
+        if settings.network_stats_enabled:
+            stats_writer = NetworkStatsWriter(settings.network_stats_output_dir)
+            logger.info(
+                "Network statistics monitoring enabled",
+                output_dir=settings.network_stats_output_dir,
+            )
+
+        transport = ExtendedDailyTransport(
             runner_args.room_url,
             runner_args.token,
             "Voice Agent",
@@ -259,6 +274,7 @@ async def bot(runner_args: RunnerArguments) -> None:
                 turn_analyzer=turn_analyzer,
                 transcription_enabled=True,
             ),
+            stats_writer=stats_writer,
         )
 
     elif isinstance(runner_args, SmallWebRTCRunnerArguments):

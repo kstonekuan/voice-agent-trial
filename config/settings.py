@@ -1,5 +1,7 @@
 """Configuration management for voice agent platform using Pydantic Settings."""
 
+from pathlib import Path
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -36,3 +38,12 @@ class Settings(BaseSettings):
         "http://localhost:4317", description="OTLP gRPC endpoint for trace export"
     )
     otel_service_name: str = Field("voice-agent", description="Service name for tracing")
+
+    # Network Statistics Monitoring
+    network_stats_enabled: bool = Field(
+        True, description="Enable network statistics monitoring and CSV logging"
+    )
+    network_stats_output_dir: Path = Field(
+        Path("data/network_stats"),
+        description="Directory for network statistics CSV output files",
+    )

@@ -61,3 +61,4 @@ uv.lock
 audio_recordings/
 recordings/
 temp/
+*.csv

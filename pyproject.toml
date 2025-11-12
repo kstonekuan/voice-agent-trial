@@ -10,6 +10,11 @@ dependencies = [
     "loguru>=0.7.3",
     "typer>=0.20.0",
     "opentelemetry-exporter-otlp-proto-grpc>=1.20.0",
+    "aiofiles>=24.1.0",
+    "streamlit>=1.32.0",
+    "plotly>=5.18.0",
+    "pandas>=2.2.0",
+    "watchdog>=4.0.0",
 ]
 
 [project.scripts]
@@ -47,9 +52,10 @@ select = [
     "PGH", # pylint guessing/hinting
 ]
 ignore = [
-    "E501", # line too long, handled by formatter
-    "B008", # do not perform function calls in argument defaults
-    "C901", # too complex
+    "E501",   # line too long, handled by formatter
+    "B008",   # do not perform function calls in argument defaults
+    "C901",   # too complex
+    "RET504", # unnecessary return
 ]
 
 [tool.ruff.format]

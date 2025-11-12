@@ -5,6 +5,8 @@ import {
 } from '@pipecat-ai/client-react';
 import { ConnectButton } from '../components/ConnectButton';
 import { DebugDisplay } from '../components/DebugDisplay';
+import { NetworkStats } from '../components/NetworkStats';
+import { NetworkStatsGraph } from '../components/NetworkStatsGraph';
 import { StatusDisplay } from '../components/StatusDisplay';
 import { DailyProvider } from '../providers/DailyProvider';
 import '../App.css';
@@ -32,6 +34,18 @@ function DailyPageContent() {
 
       <div className="main-content">
         <BotVideo />
+
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '1fr 2fr',
+            gap: '1rem',
+            marginTop: '1rem',
+          }}
+        >
+          <NetworkStats />
+          <NetworkStatsGraph />
+        </div>
       </div>
 
       <DebugDisplay />
