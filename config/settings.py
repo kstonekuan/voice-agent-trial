@@ -47,3 +47,15 @@ class Settings(BaseSettings):
         Path("data/network_stats"),
         description="Directory for network statistics CSV output files",
     )
+
+    # Voice Dictation Configuration
+    dictation_hotkey: str = Field(
+        "ctrl_r", description="Hotkey for push-to-talk dictation (ctrl_r, alt_r, etc.)"
+    )
+    dictation_auto_format: bool = Field(
+        True, description="Enable auto-formatting (remove filler words, add punctuation)"
+    )
+    dictation_typing_speed: float = Field(
+        0.0, description="Delay between characters when typing (0 = instant)"
+    )
+    dictation_show_preview: bool = Field(True, description="Show transcription preview in terminal")
