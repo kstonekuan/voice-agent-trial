@@ -3,8 +3,8 @@
 
 A local voice-to-text dictation tool using:
 - Cartesia Ink-Whisper (STT)
+- Cerebras LLM (text cleanup)
 - Local audio input (microphone)
-- Auto-formatting (remove filler words, add punctuation)
 - Direct text insertion (keyboard simulation)
 
 Press and hold the hotkey to record, release to transcribe and type.
@@ -12,8 +12,10 @@ Press and hold the hotkey to record, release to transcribe and type.
 
 import asyncio
 import sys
+from typing import Any
 
 import typer
+from pipecat.transports.local.audio import LocalAudioTransport
 from pynput import keyboard
 
 from config.settings import Settings
@@ -27,24 +29,30 @@ from utils.logger import configure_logging, logger
 # CLI app
 app = typer.Typer(help="Voice dictation tool with push-to-talk")
 
-# Global state
-_is_recording = False
-_transport: object | None = None
-
 
 class DictationController:
-    """Controls dictation state and handles keyboard events."""
+    """Controls dictation state and handles keyboard events.
 
-    def __init__(self, hotkey_name: str = "ctrl_r") -> None:
+    Directly controls the PyAudio stream to start/stop audio capture
+    based on push-to-talk hotkey press/release.
+    """
+
+    def __init__(
+        self,
+        hotkey_name: str = "ctrl_r",
+        transport: LocalAudioTransport | None = None,
+    ) -> None:
         """Initialize dictation controller.
 
         Args:
             hotkey_name: Name of hotkey to use (ctrl_r, ctrl_l, alt_r, etc.)
+            transport: LocalAudioTransport instance to control
         """
         self.hotkey_name = hotkey_name
         self.is_recording = False
         self.listener: keyboard.Listener | None = None
-        self.transport: object | None = None
+        self.transport = transport
+        self._stream_ready = False
 
         # Map hotkey names to keyboard keys
         self.hotkey_map = {
@@ -58,6 +66,49 @@ class DictationController:
 
         self.hotkey = self.hotkey_map.get(hotkey_name, keyboard.Key.ctrl_r)
 
+    def set_transport(self, transport: LocalAudioTransport) -> None:
+        """Set the transport after initialization.
+
+        Args:
+            transport: LocalAudioTransport instance to control
+        """
+        self.transport = transport
+
+    def mark_stream_ready(self) -> None:
+        """Mark the audio stream as ready for control."""
+        self._stream_ready = True
+        # Pause the stream initially - wait for hotkey
+        self._pause_stream()
+        logger.info("Audio stream ready - waiting for hotkey")
+
+    def _get_audio_stream(self) -> Any | None:
+        """Get the underlying PyAudio stream if available.
+
+        Returns:
+            PyAudio stream or None if not ready
+        """
+        if not self.transport or not self._stream_ready:
+            return None
+        # Access the internal input transport and its stream
+        input_transport = getattr(self.transport, "_input", None)
+        if input_transport:
+            return getattr(input_transport, "_in_stream", None)
+        return None
+
+    def _start_stream(self) -> None:
+        """Start the PyAudio audio capture stream."""
+        stream = self._get_audio_stream()
+        if stream and not stream.is_active():
+            stream.start_stream()
+            logger.debug("Audio stream started")
+
+    def _pause_stream(self) -> None:
+        """Pause the PyAudio audio capture stream."""
+        stream = self._get_audio_stream()
+        if stream and stream.is_active():
+            stream.stop_stream()
+            logger.debug("Audio stream paused")
+
     def on_press(self, key: keyboard.Key) -> None:
         """Handle key press events.
 
@@ -66,8 +117,8 @@ class DictationController:
         """
         if key == self.hotkey and not self.is_recording:
             self.is_recording = True
-            logger.info("🎤 Recording started (hold to continue)...")
-            # TODO: Start recording audio
+            logger.info("🎤 Recording...")
+            self._start_stream()
 
     def on_release(self, key: keyboard.Key) -> None:
         """Handle key release events.
@@ -77,8 +128,8 @@ class DictationController:
         """
         if key == self.hotkey and self.is_recording:
             self.is_recording = False
-            logger.info("⌨️  Processing and typing...")
-            # TODO: Stop recording and process
+            logger.info("⌨️  Processing...")
+            self._pause_stream()
 
     def start_listening(self) -> None:
         """Start listening for keyboard events."""
@@ -121,11 +172,6 @@ def main(
         "-k",
         help="Hotkey to trigger recording (ctrl_r, ctrl_l, alt_r, alt_l, shift_r, shift_l)",
     ),
-    no_format: bool = typer.Option(
-        False,
-        "--no-format",
-        help="Disable auto-formatting (keep filler words, no punctuation)",
-    ),
     typing_speed: float = typer.Option(
         0.0,
         "--typing-speed",
@@ -139,7 +185,7 @@ def main(
     Examples:
         voice-dictation
         voice-dictation --hotkey alt_r
-        voice-dictation --no-format --verbose
+        voice-dictation --typing-speed 0.02 --verbose
     """
     # Configure logging
     configure_logging()
@@ -150,11 +196,6 @@ def main(
     # Load settings
     try:
         settings = Settings()
-
-        # Override settings with CLI options
-        if no_format:
-            settings.dictation_auto_format = False
-            logger.info("Auto-formatting disabled")
 
         if typing_speed > 0:
             settings.dictation_typing_speed = typing_speed
@@ -172,21 +213,22 @@ def main(
     # Print welcome message
     print_welcome(hotkey)
 
-    # Create dictation controller
-    controller = DictationController(hotkey_name=hotkey)
+    # Create transport
+    transport = create_dictation_transport(settings)
+
+    # Create dictation controller with transport reference
+    controller = DictationController(hotkey_name=hotkey, transport=transport)
 
     # Start keyboard listener
     controller.start_listening()
 
     # Run dictation pipeline
     try:
-        # Create transport and pipeline
-        transport = create_dictation_transport(settings)
+        # Create pipeline
         pipeline = create_dictation_pipeline(settings, transport)
-        controller.transport = transport
 
-        # Run the pipeline
-        asyncio.run(run_dictation_pipeline(settings, transport, pipeline))
+        # Run the pipeline (this will initialize the audio stream)
+        asyncio.run(run_dictation_pipeline(settings, transport, pipeline, controller))
 
     except KeyboardInterrupt:
         logger.info("\n👋 Shutting down dictation tool...")

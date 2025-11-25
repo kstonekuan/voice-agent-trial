@@ -1,5 +1,10 @@
 """Dictation service initialization and pipeline setup."""
 
+from __future__ import annotations
+
+import asyncio
+from typing import TYPE_CHECKING
+
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
@@ -7,10 +12,14 @@ from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransportParams
 
 from config.settings import Settings
-from processors.auto_formatter import AutoFormatterProcessor
+from processors.llm_cleanup import LLMCleanupProcessor
 from processors.text_inserter import TextInserterProcessor
+from services.llm_service import create_llm_service
 from services.stt_service import create_stt_service
 from utils.logger import logger
+
+if TYPE_CHECKING:
+    from voice_dictation import DictationController
 
 
 def create_dictation_transport(settings: Settings) -> LocalAudioTransport:
@@ -42,7 +51,7 @@ def create_dictation_pipeline(
     Pipeline flow:
     1. LocalAudioTransport (microphone input)
     2. CartesiaSTTService (speech-to-text)
-    3. AutoFormatterProcessor (text cleanup)
+    3. LLMCleanupProcessor (Cerebras text cleanup)
     4. TextInserterProcessor (keyboard simulation)
 
     Args:
@@ -56,9 +65,10 @@ def create_dictation_pipeline(
 
     # Initialize services
     stt_service = create_stt_service(settings)
+    llm_service = create_llm_service(settings)
 
     # Initialize processors
-    auto_formatter = AutoFormatterProcessor(enabled=settings.dictation_auto_format)
+    llm_cleanup = LLMCleanupProcessor(llm_service=llm_service)
 
     text_inserter = TextInserterProcessor(
         typing_speed=settings.dictation_typing_speed,
@@ -70,7 +80,7 @@ def create_dictation_pipeline(
         [
             transport.input(),  # Microphone input with VAD
             stt_service,  # Speech-to-text transcription
-            auto_formatter,  # Clean up and format text
+            llm_cleanup,  # LLM-based text cleanup
             text_inserter,  # Type into active window
         ]
     )
@@ -79,10 +89,42 @@ def create_dictation_pipeline(
     return pipeline
 
 
+async def _wait_for_stream_and_pause(
+    transport: LocalAudioTransport,
+    controller: DictationController,
+    timeout: float = 10.0,
+) -> None:
+    """Wait for audio stream to be initialized, then pause it.
+
+    Args:
+        transport: Local audio transport
+        controller: Dictation controller to notify
+        timeout: Maximum time to wait in seconds
+    """
+    elapsed = 0.0
+    interval = 0.1
+
+    while elapsed < timeout:
+        # Check if the input transport and stream exist
+        input_transport = getattr(transport, "_input", None)
+        if input_transport:
+            stream = getattr(input_transport, "_in_stream", None)
+            if stream is not None:
+                # Stream is ready - notify controller
+                controller.mark_stream_ready()
+                return
+
+        await asyncio.sleep(interval)
+        elapsed += interval
+
+    logger.warning("Timeout waiting for audio stream to initialize")
+
+
 async def run_dictation_pipeline(
     settings: Settings,
     transport: LocalAudioTransport,
     pipeline: Pipeline,
+    controller: DictationController,
 ) -> None:
     """Run the dictation pipeline.
 
@@ -90,6 +132,7 @@ async def run_dictation_pipeline(
         settings: Application settings
         transport: Local audio transport
         pipeline: Configured pipeline
+        controller: Dictation controller for PTT control
     """
     logger.info("Starting dictation pipeline")
 
@@ -107,7 +150,15 @@ async def run_dictation_pipeline(
     runner = PipelineRunner()
 
     try:
+        # Start the stream initialization watcher as a background task
+        stream_watcher = asyncio.create_task(_wait_for_stream_and_pause(transport, controller))
+
+        # Run the pipeline (this blocks until pipeline ends)
         await runner.run(task)
+
+        # Cancel stream watcher if still running
+        stream_watcher.cancel()
+
     except KeyboardInterrupt:
         logger.info("Dictation interrupted by user")
     except Exception as e:
