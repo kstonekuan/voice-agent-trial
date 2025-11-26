@@ -62,3 +62,20 @@ audio_recordings/
 recordings/
 temp/
 *.csv
+
+# Node.js / Electron
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-debug.log*
+
+# Electron build output
+electron-dictation/dist/
+electron-dictation/out/
+electron-dictation/release/
+*.asar
+
+# electron-vite
+.electron-vite/

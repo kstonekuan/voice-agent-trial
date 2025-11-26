@@ -48,11 +48,8 @@ class Settings(BaseSettings):
         description="Directory for network statistics CSV output files",
     )
 
-    # Voice Dictation Configuration
-    dictation_hotkey: str = Field(
-        "ctrl_r", description="Hotkey for push-to-talk dictation (ctrl_r, alt_r, etc.)"
+    # Dictation Server Configuration
+    dictation_server_host: str = Field(
+        "127.0.0.1", description="Host for the dictation WebSocket server"
     )
-    dictation_typing_speed: float = Field(
-        0.0, description="Delay between characters when typing (0 = instant)"
-    )
-    dictation_show_preview: bool = Field(True, description="Show transcription preview in terminal")
+    dictation_server_port: int = Field(8765, description="Port for the dictation WebSocket server")
