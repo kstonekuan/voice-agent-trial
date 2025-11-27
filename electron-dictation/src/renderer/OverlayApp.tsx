@@ -161,6 +161,14 @@ function RecordingControl() {
 			onClick={handleClick}
 			isMicEnabled={isRecording}
 			noDevicePicker={true}
+			noVisualizer={!isRecording}
+			visualizerProps={{
+				barColor: "#ffffff",
+				backgroundColor: "#000000",
+			}}
+			classNames={{
+				button: "bg-black text-white hover:bg-gray-900",
+			}}
 		/>
 	);
 }
