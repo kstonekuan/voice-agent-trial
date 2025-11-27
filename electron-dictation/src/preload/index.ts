@@ -14,6 +14,7 @@ export interface ElectronAPI {
 	onUpdateState: (callback: (state: OverlayState) => void) => () => void;
 	typeText: (text: string) => Promise<TypeTextResult>;
 	getServerUrl: () => Promise<string>;
+	setIgnoreMouseEvents: (ignore: boolean) => void;
 }
 
 const electronAPI: ElectronAPI = {
@@ -45,6 +46,9 @@ const electronAPI: ElectronAPI = {
 	typeText: (text) => ipcRenderer.invoke("type-text", text),
 
 	getServerUrl: () => ipcRenderer.invoke("get-server-url"),
+
+	setIgnoreMouseEvents: (ignore) =>
+		ipcRenderer.send("set-ignore-mouse-events", ignore),
 };
 
 contextBridge.exposeInMainWorld("electronAPI", electronAPI);

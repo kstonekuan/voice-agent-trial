@@ -8,7 +8,8 @@ export default function App() {
 			<div className="instructions">
 				<h3>How to use:</h3>
 				<p>
-					Hold <kbd>Ctrl</kbd> + <kbd>Alt</kbd> to record (push-to-talk)
+					Press <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>Space</kbd> to toggle
+					recording
 				</p>
 				<p>Or click the overlay to toggle recording</p>
 			</div>
