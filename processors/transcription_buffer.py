@@ -1,24 +1,25 @@
 """Transcription buffer processor for dictation.
 
-Buffers transcription text until the user stops speaking (VAD signals end of utterance),
+Buffers transcription text until the user explicitly stops recording,
 then emits a single consolidated transcription for LLM cleanup.
 """
 
 from datetime import datetime, timezone
 from typing import Any
 
-from pipecat.frames.frames import Frame, TranscriptionFrame, UserStoppedSpeakingFrame
+from pipecat.frames.frames import Frame, TranscriptionFrame
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
+from pipecat.processors.frameworks.rtvi import RTVIClientMessageFrame
 
 from utils.logger import logger
 
 
 class TranscriptionBufferProcessor(FrameProcessor):
-    """Buffers transcriptions until user stops speaking.
+    """Buffers transcriptions until user stops recording.
 
     This processor accumulates transcription text from partial STT results
-    and emits a single consolidated TranscriptionFrame when the VAD detects
-    the user has stopped speaking. This allows the LLM cleanup to process
+    and emits a single consolidated TranscriptionFrame when the client sends
+    a 'stop-recording' message. This allows the LLM cleanup to process
     complete utterances instead of fragments.
     """
 
@@ -30,7 +31,7 @@ class TranscriptionBufferProcessor(FrameProcessor):
         self._last_language = None
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
-        """Process frames, buffering transcriptions until end of speech.
+        """Process frames, buffering transcriptions until stop-recording message.
 
         Args:
             frame: The frame to process
@@ -49,10 +50,10 @@ class TranscriptionBufferProcessor(FrameProcessor):
             # Don't push TranscriptionFrame - we'll emit consolidated version later
             return
 
-        if isinstance(frame, UserStoppedSpeakingFrame):
-            # User stopped speaking - flush the buffer
+        if isinstance(frame, RTVIClientMessageFrame) and frame.type == "stop-recording":
+            # Client explicitly stopped recording - flush the buffer
             if self._buffer.strip():
-                logger.info(f"Flushing transcription buffer: '{self._buffer.strip()}'")
+                logger.info(f"Stop-recording received, flushing buffer: '{self._buffer.strip()}'")
                 timestamp = datetime.now(timezone.utc).isoformat()
                 consolidated_frame = TranscriptionFrame(
                     text=self._buffer.strip(),
@@ -62,8 +63,9 @@ class TranscriptionBufferProcessor(FrameProcessor):
                 )
                 await self.push_frame(consolidated_frame, direction)
                 self._buffer = ""
-            # Pass through the UserStoppedSpeakingFrame
-            await self.push_frame(frame, direction)
+            else:
+                logger.info("Stop-recording received but buffer is empty")
+            # Don't pass through the client message frame
             return
 
         # Pass through all other frames unchanged

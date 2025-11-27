@@ -14,7 +14,6 @@ from typing import Any
 
 import typer
 from loguru import logger
-from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.frames.frames import Frame, OutputTransportMessageFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
@@ -72,13 +71,13 @@ async def run_server(host: str, port: int, settings: Settings) -> None:
     logger.info(f"Starting WebSocket server on ws://{host}:{port}")
 
     # Create WebSocket transport with protobuf serializer for pipecat-ai/client-js compatibility
+    # No VAD - buffer flushes when client sends stop-recording message (like Wispr Flow)
     transport = WebsocketServerTransport(
         host=host,
         port=port,
         params=WebsocketServerParams(
             audio_in_enabled=True,
             audio_out_enabled=False,  # No audio output for dictation
-            vad_analyzer=SileroVADAnalyzer(),  # Enables VAD with Silero
             serializer=ProtobufFrameSerializer(),  # Required for @pipecat-ai/websocket-transport
         ),
     )
@@ -93,7 +92,7 @@ async def run_server(host: str, port: int, settings: Settings) -> None:
     text_response = TextResponseProcessor()
 
     # Build pipeline: Audio -> STT -> Buffer -> LLM Cleanup -> Text Response -> Output
-    # The buffer accumulates partial transcriptions until VAD signals end of speech
+    # The buffer accumulates partial transcriptions until client sends stop-recording
     pipeline = Pipeline(
         [
             transport.input(),  # Audio from Electron client

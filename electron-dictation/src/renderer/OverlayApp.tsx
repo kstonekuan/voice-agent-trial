@@ -18,13 +18,20 @@ declare global {
 function RecordingControl() {
 	const client = usePipecatClient();
 	const [isRecording, setIsRecording] = useState(false);
+	const [isWaitingForResponse, setIsWaitingForResponse] = useState(false);
 	const isRecordingRef = useRef(false);
+	const isWaitingForResponseRef = useRef(false);
+	const responseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const clientRef = useRef(client);
 
 	// Keep refs in sync
 	useEffect(() => {
 		isRecordingRef.current = isRecording;
 	}, [isRecording]);
+
+	useEffect(() => {
+		isWaitingForResponseRef.current = isWaitingForResponse;
+	}, [isWaitingForResponse]);
 
 	useEffect(() => {
 		clientRef.current = client;
@@ -45,16 +52,35 @@ function RecordingControl() {
 		}
 	}, []);
 
-	const stopRecording = useCallback(async () => {
+	const stopRecording = useCallback(() => {
 		const currentClient = clientRef.current;
 		if (!isRecordingRef.current || !currentClient) return;
 		isRecordingRef.current = false;
 		setIsRecording(false);
+		setIsWaitingForResponse(true);
+
+		// Tell server to flush the transcription buffer
 		try {
-			await currentClient.disconnect();
+			currentClient.sendClientMessage("stop-recording", {});
 		} catch (error) {
-			console.error("Failed to disconnect:", error);
+			console.error("Failed to send stop-recording message:", error);
 		}
+
+		// Clear any existing timeout
+		if (responseTimeoutRef.current) {
+			clearTimeout(responseTimeoutRef.current);
+		}
+
+		// Set a timeout to disconnect if no response in 10 seconds
+		responseTimeoutRef.current = setTimeout(() => {
+			if (isWaitingForResponseRef.current) {
+				console.log("Response timeout - disconnecting");
+				setIsWaitingForResponse(false);
+				currentClient.disconnect().catch((error) => {
+					console.error("Failed to disconnect on timeout:", error);
+				});
+			}
+		}, 10000);
 	}, []);
 
 	// Hotkey events (toggle mode) from main process - register ONCE
@@ -82,28 +108,51 @@ function RecordingControl() {
 		}
 	}, [isRecording, startRecording, stopRecording]);
 
-	// Handle transcript and type text
+	// Handle transcript and type text, then disconnect
 	useEffect(() => {
 		if (!client) return;
 
-		const handleTranscript = async (data: { text?: string }) => {
-			if (data.text) {
-				await window.electronAPI.typeText(data.text);
-				window.electronAPI.setOverlayState("idle");
+		const handleResponseReceived = async (text: string) => {
+			// Clear the timeout since we got a response
+			if (responseTimeoutRef.current) {
+				clearTimeout(responseTimeoutRef.current);
+				responseTimeoutRef.current = null;
+			}
+
+			await window.electronAPI.typeText(text);
+			window.electronAPI.setOverlayState("idle");
+
+			// Disconnect after receiving response
+			setIsWaitingForResponse(false);
+			const currentClient = clientRef.current;
+			if (currentClient) {
+				try {
+					await currentClient.disconnect();
+				} catch (error) {
+					console.error("Failed to disconnect after response:", error);
+				}
 			}
 		};
 
-		client.on(RTVIEvent.BotTranscript, handleTranscript);
-		client.on(RTVIEvent.ServerMessage, async (message: unknown) => {
+		const handleBotTranscript = async (data: { text?: string }) => {
+			if (data.text) {
+				await handleResponseReceived(data.text);
+			}
+		};
+
+		const handleServerMessage = async (message: unknown) => {
 			const msg = message as { type?: string; text?: string };
 			if (msg.type === "transcript" && msg.text) {
-				await window.electronAPI.typeText(msg.text);
-				window.electronAPI.setOverlayState("idle");
+				await handleResponseReceived(msg.text);
 			}
-		});
+		};
+
+		client.on(RTVIEvent.BotTranscript, handleBotTranscript);
+		client.on(RTVIEvent.ServerMessage, handleServerMessage);
 
 		return () => {
-			client.off(RTVIEvent.BotTranscript, handleTranscript);
+			client.off(RTVIEvent.BotTranscript, handleBotTranscript);
+			client.off(RTVIEvent.ServerMessage, handleServerMessage);
 		};
 	}, [client]);
 
