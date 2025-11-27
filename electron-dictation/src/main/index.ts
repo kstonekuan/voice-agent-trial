@@ -52,26 +52,6 @@ function createMainWindow(): void {
 	});
 }
 
-function positionOverlayBottomRight(): void {
-	if (!overlayWindow) return;
-	const primaryDisplay = screen.getPrimaryDisplay();
-	// Use bounds instead of workAreaSize to ignore dock/taskbar inset
-	const { width, height } = primaryDisplay.bounds;
-
-	// Use fixed window size since content may not be rendered yet
-	const windowWidth = 200;
-	const windowHeight = 80;
-
-	// Position with minimal margin (10px) to ensure it's truly at bottom-right
-	const x = width - windowWidth - 10;
-	const y = height - windowHeight - 10;
-
-	console.log(
-		`Positioning overlay to: ${x}, ${y} (bounds: ${width}x${height})`,
-	);
-	overlayWindow.setPosition(x, y);
-}
-
 function createOverlayWindow(): void {
 	const primaryDisplay = screen.getPrimaryDisplay();
 	const { width, height } = primaryDisplay.bounds;
@@ -146,10 +126,14 @@ function createOverlayWindow(): void {
 	overlayWindow.webContents.once("did-finish-load", () => {
 		// Small delay to ensure content is rendered before positioning
 		setTimeout(() => {
-			positionOverlayBottomRight();
-			overlayWindow?.show();
+			if (!overlayWindow) return;
+			const display = screen.getPrimaryDisplay();
+			const x = display.bounds.width - 200 - 10;
+			const y = display.bounds.height - 80 - 10;
+			overlayWindow.setPosition(x, y);
+			overlayWindow.show();
 			// Re-apply always on top after show (helps on some WMs)
-			overlayWindow?.setAlwaysOnTop(true, "screen-saver");
+			overlayWindow.setAlwaysOnTop(true, "screen-saver");
 		}, 100);
 	});
 }
@@ -289,13 +273,6 @@ ipcMain.handle("type-text", async (_event, text: string) => {
 });
 
 ipcMain.handle("get-server-url", () => SERVER_URL);
-
-// Handle mouse event toggling for overlay (prevents focus stealing)
-ipcMain.on("set-ignore-mouse-events", (_event, ignore: boolean) => {
-	if (overlayWindow && !overlayWindow.isDestroyed()) {
-		overlayWindow.setIgnoreMouseEvents(ignore, { forward: true });
-	}
-});
 
 app.whenReady().then(() => {
 	createMainWindow();

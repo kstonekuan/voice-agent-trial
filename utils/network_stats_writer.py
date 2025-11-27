@@ -7,7 +7,7 @@ from Daily transport to CSV files with daily rotation.
 from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any, ClassVar, TypedDict
 
 import aiofiles
 from loguru import logger
@@ -63,7 +63,7 @@ class NetworkStatsWriter:
     # CSV column headers matching Daily Python SDK's available fields
     # Note: Python SDK provides fewer fields than JavaScript SDK
     # See: https://reference-python.daily.co/types.html#networkstats
-    HEADERS = [
+    HEADERS: ClassVar[list[str]] = [
         "timestamp",
         "timestamp_iso",
         # Aggregate bandwidth metrics

@@ -117,11 +117,11 @@ async def run_server(host: str, port: int, settings: Settings) -> None:
 
     # Set up event handlers
     @transport.event_handler("on_client_connected")
-    async def on_client_connected(transport: Any, client: Any) -> None:
+    async def on_client_connected(_transport: Any, client: Any) -> None:
         logger.info(f"Client connected: {client}")
 
     @transport.event_handler("on_client_disconnected")
-    async def on_client_disconnected(transport: Any, client: Any) -> None:
+    async def on_client_disconnected(_transport: Any, client: Any) -> None:
         logger.info(f"Client disconnected: {client}")
 
     # Run the server

@@ -184,7 +184,7 @@ async def run_bot(transport: BaseTransport) -> None:
 
     # Register RTVI event handlers
     @rtvi.event_handler("on_client_ready")
-    async def on_client_ready(rtvi_processor: Any) -> None:  # noqa: ANN401
+    async def on_client_ready(rtvi_processor: Any) -> None:
         logger.info("Client ready, setting bot ready")
         await rtvi_processor.set_bot_ready()
         # Kick off the conversation
@@ -192,13 +192,13 @@ async def run_bot(transport: BaseTransport) -> None:
 
     # Register transport event handlers
     @transport.event_handler("on_client_connected")
-    async def on_client_connected(transport_instance: Any, participant: Any) -> None:  # noqa: ANN401
+    async def on_client_connected(_transport_instance: Any, participant: Any) -> None:
         logger.success(f"✅ Client connected: {participant}")
         if isinstance(transport, DailyTransport):
             await transport.capture_participant_transcription(participant["id"])
 
     @transport.event_handler("on_client_disconnected")
-    async def on_client_disconnected(transport_instance: Any, client: Any) -> None:  # noqa: ANN401
+    async def on_client_disconnected(_transport_instance: Any, client: Any) -> None:
         logger.info(f"Client disconnected: {client}")
         await task.cancel()
 
