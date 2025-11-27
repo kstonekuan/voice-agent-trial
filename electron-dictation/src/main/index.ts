@@ -249,16 +249,11 @@ ipcMain.on("overlay-state", (_event, state: string) => {
 });
 
 ipcMain.handle("type-text", async (_event, text: string) => {
+	// 1. Save existing clipboard content before any operations
+	const previousClipboard = clipboard.readText();
+
 	try {
 		const { keyboard, Key } = await import("@nut-tree-fork/nut-js");
-
-		// 1. Save existing clipboard content (Wispr Flow approach)
-		let previousClipboard: string | undefined;
-		try {
-			previousClipboard = clipboard.readText();
-		} catch {
-			// Clipboard may be empty or contain non-text
-		}
 
 		// 2. Copy transcribed text to clipboard
 		clipboard.writeText(text);
@@ -279,21 +274,16 @@ ipcMain.handle("type-text", async (_event, text: string) => {
 		await delay(50);
 		await keyboard.releaseKey(modifier);
 
-		// 5. Restore previous clipboard after paste completes (Wispr Flow approach)
-		if (previousClipboard !== undefined) {
-			setTimeout(() => {
-				try {
-					clipboard.writeText(previousClipboard);
-				} catch {
-					// Ignore errors restoring clipboard
-				}
-			}, 100);
-		}
+		// 5. Restore previous clipboard after paste completes
+		setTimeout(() => {
+			clipboard.writeText(previousClipboard);
+		}, 100);
 
 		return { success: true };
 	} catch (error) {
 		console.error("Failed to paste text:", error);
-		// Graceful degradation: text is still in clipboard for manual paste
+		// Always restore clipboard even on error
+		clipboard.writeText(previousClipboard);
 		return { success: false, error: (error as Error).message };
 	}
 });
