@@ -57,7 +57,7 @@ function RecordingControl() {
 		}
 	}, []);
 
-	// Hotkey events (hold mode) from main process - register ONCE
+	// Hotkey events (toggle mode) from main process - register ONCE
 	useEffect(() => {
 		const unsubscribeStart = window.electronAPI.onStartRecording(() => {
 			startRecording();

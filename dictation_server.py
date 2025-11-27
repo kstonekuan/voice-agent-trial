@@ -15,11 +15,12 @@ from typing import Any
 import typer
 from loguru import logger
 from pipecat.audio.vad.silero import SileroVADAnalyzer
-from pipecat.frames.frames import Frame, TextFrame
+from pipecat.frames.frames import Frame, OutputTransportMessageFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
+from pipecat.serializers.protobuf import ProtobufFrameSerializer
 from pipecat.transports.websocket.server import (
     WebsocketServerParams,
     WebsocketServerTransport,
@@ -27,6 +28,7 @@ from pipecat.transports.websocket.server import (
 
 from config.settings import Settings
 from processors.llm_cleanup import LLMCleanupProcessor
+from processors.transcription_buffer import TranscriptionBufferProcessor
 from services.llm_service import create_llm_service
 from services.stt_service import create_stt_service
 from utils.logger import configure_logging
@@ -36,14 +38,14 @@ app = typer.Typer(help="Voice dictation WebSocket server")
 
 
 class TextResponseProcessor(FrameProcessor):
-    """Processor that logs text frames being sent back to the client.
+    """Processor that logs message frames being sent back to the client.
 
     This processor sits at the end of the pipeline before transport.output()
     to log the final cleaned text being sent to the Electron client.
     """
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
-        """Process frames and log TextFrames.
+        """Process frames and log OutputTransportMessageFrames.
 
         Args:
             frame: The frame to process
@@ -51,8 +53,10 @@ class TextResponseProcessor(FrameProcessor):
         """
         await super().process_frame(frame, direction)
 
-        if isinstance(frame, TextFrame):
-            logger.info(f"Sending to client: '{frame.text}'")
+        if isinstance(frame, OutputTransportMessageFrame):
+            data = frame.message.get("data", {})
+            text = data.get("text", "")
+            logger.info(f"Sending to client: '{text}'")
 
         await self.push_frame(frame, direction)
 
@@ -67,7 +71,7 @@ async def run_server(host: str, port: int, settings: Settings) -> None:
     """
     logger.info(f"Starting WebSocket server on ws://{host}:{port}")
 
-    # Create WebSocket transport
+    # Create WebSocket transport with protobuf serializer for pipecat-ai/client-js compatibility
     transport = WebsocketServerTransport(
         host=host,
         port=port,
@@ -75,7 +79,7 @@ async def run_server(host: str, port: int, settings: Settings) -> None:
             audio_in_enabled=True,
             audio_out_enabled=False,  # No audio output for dictation
             vad_analyzer=SileroVADAnalyzer(),  # Enables VAD with Silero
-            # Note: audio passthrough is now always enabled by default
+            serializer=ProtobufFrameSerializer(),  # Required for @pipecat-ai/websocket-transport
         ),
     )
 
@@ -84,14 +88,17 @@ async def run_server(host: str, port: int, settings: Settings) -> None:
     llm_service = create_llm_service(settings)
 
     # Initialize processors
+    transcription_buffer = TranscriptionBufferProcessor()
     llm_cleanup = LLMCleanupProcessor(llm_service=llm_service)
     text_response = TextResponseProcessor()
 
-    # Build pipeline: Audio -> STT -> LLM Cleanup -> Text Response -> Output
+    # Build pipeline: Audio -> STT -> Buffer -> LLM Cleanup -> Text Response -> Output
+    # The buffer accumulates partial transcriptions until VAD signals end of speech
     pipeline = Pipeline(
         [
             transport.input(),  # Audio from Electron client
-            stt_service,  # Speech-to-text
+            stt_service,  # Speech-to-text (produces partial transcriptions)
+            transcription_buffer,  # Buffer until user stops speaking
             llm_cleanup,  # LLM-based text cleanup
             text_response,  # Log outgoing text
             transport.output(),  # Send text back to client

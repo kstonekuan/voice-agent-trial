@@ -2,7 +2,11 @@
 
 from typing import Any
 
-from pipecat.frames.frames import Frame, TextFrame, TranscriptionFrame
+from pipecat.frames.frames import (
+    Frame,
+    OutputTransportMessageFrame,
+    TranscriptionFrame,
+)
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.services.cerebras.llm import CerebrasLLMService
 
@@ -63,9 +67,14 @@ class LLMCleanupProcessor(FrameProcessor):
                 cleaned_text = await self._cleanup_text(text)
                 logger.info(f"Cleaned: '{text}' -> '{cleaned_text}'")
 
-                # Push cleaned text downstream
-                cleaned_frame = TextFrame(text=cleaned_text)
-                await self.push_frame(cleaned_frame, direction)
+                # Push cleaned text as RTVI server message for client compatibility
+                rtvi_message = {
+                    "label": "rtvi-ai",
+                    "type": "server-message",
+                    "data": {"type": "transcript", "text": cleaned_text},
+                }
+                message_frame = OutputTransportMessageFrame(message=rtvi_message)
+                await self.push_frame(message_frame, direction)
             return
 
         # Pass through all other frames unchanged
